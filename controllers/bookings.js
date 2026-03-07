@@ -5,7 +5,6 @@ import Booking from '../models/Booking.js';
 import Room from '../models/Room.js';
 import User from '../models/User.js';
 import HotelVerification from '../models/HotelVerification.js';
-import { mockRooms, getRoomsByHotelId } from '../services/mockHotelData.js';
 import { sendNotificationToUser } from './notificationController.js';
 import { syncBookingStatuses } from '../utils/bookingAutomation.js';
 
