@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Hotel Booking API
 
 A comprehensive hotel booking system API built with Node.js, Express, and MongoDB. This API provides a complete solution for hotel management, room booking, and user authentication with mock data for development and testing.
@@ -260,3 +261,7 @@ This project is licensed under the ISC License.
 ## Support
 
 For support and questions, please open an issue in the repository.
+=======
+# travel-companion-api
+This is the backend of travel-companion web app
+>>>>>>> a64824128789119d01abda8a963c69dedae92040
