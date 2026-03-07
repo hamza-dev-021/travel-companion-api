@@ -28,7 +28,7 @@ const REMEMBER_COOKIE_NAME = 'remember_me';
 const SESSION_COOKIE_OPTIONS = {
   httpOnly: true,
   secure: process.env.NODE_ENV === 'production',
-  sameSite: 'lax',
+  sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
 };
 
 // Remember-me cookie options (persistent for 30 days)

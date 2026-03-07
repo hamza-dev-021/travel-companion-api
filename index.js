@@ -37,6 +37,12 @@ if (!process.env.JWT_SECRET) {
 }
 
 const app = express();
+
+// Trust proxy (required on Render/Heroku for cookies, rate-limiting, etc.)
+if (process.env.NODE_ENV === 'production') {
+  app.set('trust proxy', 1);
+}
+
 const PORT = process.env.PORT || 5000;
 
 // ─── CORS (whitelist from env) ──────────────────────────
