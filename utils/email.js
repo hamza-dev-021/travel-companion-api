@@ -7,11 +7,15 @@ export const OTP_TIMER_SECONDS = 120;
 export const OTP_TIMER_MINUTES = Math.floor(OTP_TIMER_SECONDS / 60);
 
 const transporter = nodemailer.createTransport({
-  service: 'gmail',
+  host: 'smtp.gmail.com',
+  port: 587,
+  secure: false,
   auth: {
     user: process.env.GMAIL_USER,
     pass: process.env.GMAIL_APP_PASSWORD,
   },
+  tls: { rejectUnauthorized: false },
+  family: 4,
 });
 
 const FROM_EMAIL = process.env.EMAIL_FROM || `Travel Companion <${process.env.GMAIL_USER}>`;
