@@ -1,4 +1,4 @@
-import nodemailer from 'nodemailer';
+import { Resend } from 'resend';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -6,13 +6,30 @@ dotenv.config();
 export const OTP_TIMER_SECONDS = 120;
 export const OTP_TIMER_MINUTES = Math.floor(OTP_TIMER_SECONDS / 60);
 
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.EMAIL_USER || 'team.travelcompanion@gmail.com',
-    pass: process.env.EMAIL_APP_PASSWORD,
-  },
-});
+const resend = new Resend(process.env.RESEND_API_KEY);
+
+const FROM_EMAIL = process.env.EMAIL_FROM || 'Travel Companion <onboarding@resend.dev>';
+const FROM_ADMIN = process.env.EMAIL_FROM_ADMIN || 'Travel Companion Admin <onboarding@resend.dev>';
+const FROM_ALERT = process.env.EMAIL_FROM_ALERT || 'Travel Companion Alert <onboarding@resend.dev>';
+
+/**
+ * Helper: send email via Resend HTTP API with error logging.
+ */
+const sendEmail = async ({ from, to, subject, html }, fireAndForget = false) => {
+  const recipient = Array.isArray(to) ? to : [to];
+  const send = () => resend.emails.send({ from, to: recipient, subject, html })
+    .then(result => {
+      if (result.error) console.error('Resend error:', result.error);
+      return result;
+    })
+    .catch(err => console.error('Email send failed:', err));
+
+  if (fireAndForget) {
+    send(); // don't await
+    return;
+  }
+  return send();
+};
 
 /**
  * Send a password reset email with a link to the reset page.
@@ -23,12 +40,9 @@ export const sendPasswordResetEmail = async (to, resetToken) => {
   const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
   const resetLink = `${frontendUrl}/reset-password?token=${resetToken}`;
 
-  const stringTo = Array.isArray(to) ? to.join(', ') : to;
-
-  // Fire-and-Forget
-  transporter.sendMail({
-    from: `"Travel Companion" <${process.env.EMAIL_USER || 'team.travelcompanion@gmail.com'}>`,
-    to: stringTo,
+  sendEmail({
+    from: FROM_EMAIL,
+    to,
     subject: 'Password Reset — Travel Companion',
     html: `
       <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 480px; margin: 0 auto; padding: 32px; background: #f8fafc; border-radius: 12px;">
@@ -47,19 +61,13 @@ export const sendPasswordResetEmail = async (to, resetToken) => {
         <p style="color: #94a3b8; font-size: 12px;">Travel Companion — Pakistan's Travel Planning Platform</p>
       </div>
     `,
-  });
-};
+  }, true); // fire-and-forget
+}; // fire-and-forget
 
 /**
  * Send a 6-digit OTP to the user's email for identity verification.
- * @param {string} to - Recipient email
- * @param {string} otp - 6-digit OTP code
- * @param {string} type - Verification type ('registration', 'password-reset', or 'profile-update')
  */
 export const sendOtpEmail = async (to, otp, type = 'password-reset') => {
-  // Check if we are passing arrays or objects incorrectly from profile module updates
-  const stringTo = Array.isArray(to) ? to.join(', ') : to;
-
   let verificationMessage = 'Use the following code to verify your identity:';
   if (type === 'registration') {
     verificationMessage = 'Use the following code to verify your email address and complete your registration:';
@@ -75,9 +83,9 @@ export const sendOtpEmail = async (to, otp, type = 'password-reset') => {
     </td>`
   ).join('');
 
-  return transporter.sendMail({
-    from: `"Travel Companion" <${process.env.EMAIL_USER || 'team.travelcompanion@gmail.com'}>`,
-    to: stringTo,
+  return sendEmail({
+    from: FROM_EMAIL,
+    to,
     subject: 'Your OTP Code — Travel Companion',
     html: `
       <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 480px; margin: 0 auto; padding: 32px; background: #f8fafc; border-radius: 12px;">
@@ -140,9 +148,9 @@ export const sendBookingStatusEmail = async (booking, status, reason = '') => {
     `;
   }
 
-  // NOTE: Returning the promise directly or stripping await off transporter.sendMail(...) allows Fire-and-Forget
-  transporter.sendMail({
-    from: `"Travel Companion" <${process.env.EMAIL_USER || 'team.travelcompanion@gmail.com'}>`,
+  // Fire-and-forget
+  sendEmail({
+    from: FROM_EMAIL,
     to: booking.user.email,
     subject,
     html: `
@@ -180,7 +188,7 @@ export const sendBookingStatusEmail = async (booking, status, reason = '') => {
         <p style="color: #94a3b8; font-size: 12px; text-align: center;">Travel Companion — Pakistan's Travel Planning Platform</p>
       </div>
     `,
-  }).catch(err => console.error('Error sending booking status email:', err));
+  }, true); // fire-and-forget
 };
 
 /**
@@ -212,9 +220,9 @@ export const sendVerificationStatusEmail = async (email, providerName, serviceNa
     `;
   }
 
-  // Send asynchronously (fire-and-forget) to avoid blocking the API request
-  transporter.sendMail({
-    from: `"Travel Companion Admin" <${process.env.EMAIL_USER || 'team.travelcompanion@gmail.com'}>`,
+  // Fire-and-forget
+  sendEmail({
+    from: FROM_ADMIN,
     to: email,
     subject,
     html: `
@@ -248,7 +256,7 @@ export const sendVerificationStatusEmail = async (email, providerName, serviceNa
         <p style="color: #94a3b8; font-size: 12px; text-align: center;">Travel Companion — Pakistan's Travel Planning Platform</p>
       </div>
     `,
-  }).catch(err => console.error('Error sending verification status email:', err));
+  }, true); // fire-and-forget
 };
 
 /**
@@ -264,8 +272,8 @@ export const sendEmergencyAlertEmail = async (to, contactName, travelerName, loc
   const mapLink = `https://maps.google.com/?q=${location.latitude},${location.longitude}`;
   const addressText = location.address || 'Address unavailable';
 
-  transporter.sendMail({
-    from: `"Travel Companion Alert" <${process.env.EMAIL_USER || 'team.travelcompanion@gmail.com'}>`,
+  sendEmail({
+    from: FROM_ALERT,
     to,
     subject: `🚨 EMERGENCY ALERT: ${travelerName} Needs Help!`,
     html: `
@@ -302,7 +310,7 @@ export const sendEmergencyAlertEmail = async (to, contactName, travelerName, loc
         <p style="color: #94a3b8; font-size: 12px; text-align: center;">Automated Alert via Travel Companion</p>
       </div>
     `,
-  }).catch(err => console.error('Error sending emergency alert email:', err));
+  }, true); // fire-and-forget
 };
 
-export default transporter;
+export default resend;
