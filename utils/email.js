@@ -1,4 +1,4 @@
-import { Resend } from 'resend';
+import nodemailer from 'nodemailer';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -6,23 +6,31 @@ dotenv.config();
 export const OTP_TIMER_SECONDS = 120;
 export const OTP_TIMER_MINUTES = Math.floor(OTP_TIMER_SECONDS / 60);
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.GMAIL_USER,
+    pass: process.env.GMAIL_APP_PASSWORD,
+  },
+});
 
-const FROM_EMAIL = process.env.EMAIL_FROM || 'Travel Companion <onboarding@resend.dev>';
-const FROM_ADMIN = process.env.EMAIL_FROM_ADMIN || 'Travel Companion Admin <onboarding@resend.dev>';
-const FROM_ALERT = process.env.EMAIL_FROM_ALERT || 'Travel Companion Alert <onboarding@resend.dev>';
+const FROM_EMAIL = process.env.EMAIL_FROM || `Travel Companion <${process.env.GMAIL_USER}>`;
+const FROM_ADMIN = process.env.EMAIL_FROM_ADMIN || `Travel Companion Admin <${process.env.GMAIL_USER}>`;
+const FROM_ALERT = process.env.EMAIL_FROM_ALERT || `Travel Companion Alert <${process.env.GMAIL_USER}>`;
 
 /**
- * Helper: send email via Resend HTTP API with error logging.
+ * Helper: send email via Gmail SMTP with error logging.
  */
 const sendEmail = async ({ from, to, subject, html }, fireAndForget = false) => {
-  const recipient = Array.isArray(to) ? to : [to];
-  const send = () => resend.emails.send({ from, to: recipient, subject, html })
-    .then(result => {
-      if (result.error) console.error('Resend error:', result.error);
-      return result;
-    })
-    .catch(err => console.error('Email send failed:', err));
+  const recipients = Array.isArray(to) ? to.join(', ') : to;
+
+  const send = () =>
+    transporter.sendMail({ from, to: recipients, subject, html })
+      .then((info) => {
+        console.log('Email sent:', info.messageId);
+        return info;
+      })
+      .catch((err) => console.error('Email send failed:', err));
 
   if (fireAndForget) {
     send(); // don't await
@@ -312,5 +320,3 @@ export const sendEmergencyAlertEmail = async (to, contactName, travelerName, loc
     `,
   }, true); // fire-and-forget
 };
-
-export default resend;
