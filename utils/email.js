@@ -20,12 +20,16 @@ const parseFrom = (from) => {
   return match ? { Name: match[1].trim(), Email: match[2].trim() } : { Email: from };
 };
 
+const SPAM_HELP = `<p style="color: #94a3b8; font-size: 11px; text-align: center; margin-top: 8px;">Can't find this email? Please check your <strong>Spam</strong> or <strong>Junk</strong> folder and mark it as "Not Spam" to receive future emails in your inbox.</p>`;
+
 /**
  * Helper: send email via Mailjet HTTP API with error logging.
  */
 const sendEmail = async ({ from, to, subject, html }, fireAndForget = false) => {
   const recipients = (Array.isArray(to) ? to : [to]).map(email => ({ Email: email }));
   const sender = parseFrom(from);
+  // Strip HTML to create plain text version (improves deliverability / spam score)
+  const textPart = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 
   const send = () =>
     fetch(MAILJET_URL, {
@@ -35,7 +39,7 @@ const sendEmail = async ({ from, to, subject, html }, fireAndForget = false) => 
         'Authorization': 'Basic ' + Buffer.from(`${MAILJET_API_KEY}:${MAILJET_SECRET_KEY}`).toString('base64'),
       },
       body: JSON.stringify({
-        Messages: [{ From: sender, To: recipients, Subject: subject, HTMLPart: html }],
+        Messages: [{ From: sender, To: recipients, Subject: subject, HTMLPart: html, TextPart: textPart }],
       }),
     })
       .then(async (res) => {
@@ -81,6 +85,7 @@ export const sendPasswordResetEmail = async (to, resetToken) => {
         </p>
         <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
         <p style="color: #94a3b8; font-size: 12px;">Travel Companion — Pakistan's Travel Planning Platform</p>
+        ${SPAM_HELP}
       </div>
     `,
   }, true); // fire-and-forget
@@ -126,6 +131,7 @@ export const sendOtpEmail = async (to, otp, type = 'password-reset') => {
         </p>
         <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
         <p style="color: #94a3b8; font-size: 12px;">Travel Companion — Pakistan's Travel Planning Platform</p>
+        ${SPAM_HELP}
       </div>
     `,
   });
@@ -208,6 +214,7 @@ export const sendBookingStatusEmail = async (booking, status, reason = '') => {
         
         <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
         <p style="color: #94a3b8; font-size: 12px; text-align: center;">Travel Companion — Pakistan's Travel Planning Platform</p>
+        ${SPAM_HELP}
       </div>
     `,
   }, true); // fire-and-forget
@@ -276,6 +283,7 @@ export const sendVerificationStatusEmail = async (email, providerName, serviceNa
         
         <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
         <p style="color: #94a3b8; font-size: 12px; text-align: center;">Travel Companion — Pakistan's Travel Planning Platform</p>
+        ${SPAM_HELP}
       </div>
     `,
   }, true); // fire-and-forget
@@ -330,6 +338,7 @@ export const sendEmergencyAlertEmail = async (to, contactName, travelerName, loc
         
         <hr style="border: none; border-top: 1px solid #fca5a5; margin: 32px 0 24px 0;" />
         <p style="color: #94a3b8; font-size: 12px; text-align: center;">Automated Alert via Travel Companion</p>
+        ${SPAM_HELP}
       </div>
     `,
   }, true); // fire-and-forget
