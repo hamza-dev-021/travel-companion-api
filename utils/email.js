@@ -1,7 +1,11 @@
 import nodemailer from 'nodemailer';
+import dns from 'dns';
 import dotenv from 'dotenv';
 
 dotenv.config();
+
+// Force all DNS lookups to prefer IPv4 (fixes Render IPv6 ENETUNREACH)
+dns.setDefaultResultOrder('ipv4first');
 
 export const OTP_TIMER_SECONDS = 120;
 export const OTP_TIMER_MINUTES = Math.floor(OTP_TIMER_SECONDS / 60);
