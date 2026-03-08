@@ -1,42 +1,48 @@
-import nodemailer from 'nodemailer';
-import dns from 'dns';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
-// Force all DNS lookups to prefer IPv4 (fixes Render IPv6 ENETUNREACH)
-dns.setDefaultResultOrder('ipv4first');
-
 export const OTP_TIMER_SECONDS = 120;
 export const OTP_TIMER_MINUTES = Math.floor(OTP_TIMER_SECONDS / 60);
 
-const transporter = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
-  port: 587,
-  secure: false,
-  auth: {
-    user: process.env.GMAIL_USER,
-    pass: process.env.GMAIL_APP_PASSWORD,
-  },
-  tls: { rejectUnauthorized: false },
-  family: 4,
-});
+const MAILJET_API_KEY = process.env.MAILJET_API_KEY;
+const MAILJET_SECRET_KEY = process.env.MAILJET_SECRET_KEY;
+const MAILJET_URL = 'https://api.mailjet.com/v3.1/send';
 
-const FROM_EMAIL = process.env.EMAIL_FROM || `Travel Companion <${process.env.GMAIL_USER}>`;
-const FROM_ADMIN = process.env.EMAIL_FROM_ADMIN || `Travel Companion Admin <${process.env.GMAIL_USER}>`;
-const FROM_ALERT = process.env.EMAIL_FROM_ALERT || `Travel Companion Alert <${process.env.GMAIL_USER}>`;
+const SENDER_EMAIL = process.env.GMAIL_USER || 'team.travelcompanion@gmail.com';
+const FROM_EMAIL = process.env.EMAIL_FROM || `Travel Companion <${SENDER_EMAIL}>`;
+const FROM_ADMIN = process.env.EMAIL_FROM_ADMIN || `Travel Companion Admin <${SENDER_EMAIL}>`;
+const FROM_ALERT = process.env.EMAIL_FROM_ALERT || `Travel Companion Alert <${SENDER_EMAIL}>`;
+
+// Parse "Name <email>" into { Name, Email }
+const parseFrom = (from) => {
+  const match = from.match(/^(.+?)\s*<(.+)>$/);
+  return match ? { Name: match[1].trim(), Email: match[2].trim() } : { Email: from };
+};
 
 /**
- * Helper: send email via Gmail SMTP with error logging.
+ * Helper: send email via Mailjet HTTP API with error logging.
  */
 const sendEmail = async ({ from, to, subject, html }, fireAndForget = false) => {
-  const recipients = Array.isArray(to) ? to.join(', ') : to;
+  const recipients = (Array.isArray(to) ? to : [to]).map(email => ({ Email: email }));
+  const sender = parseFrom(from);
 
   const send = () =>
-    transporter.sendMail({ from, to: recipients, subject, html })
-      .then((info) => {
-        console.log('Email sent:', info.messageId);
-        return info;
+    fetch(MAILJET_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Basic ' + Buffer.from(`${MAILJET_API_KEY}:${MAILJET_SECRET_KEY}`).toString('base64'),
+      },
+      body: JSON.stringify({
+        Messages: [{ From: sender, To: recipients, Subject: subject, HTMLPart: html }],
+      }),
+    })
+      .then(async (res) => {
+        const data = await res.json();
+        if (!res.ok) console.error('Mailjet error:', JSON.stringify(data));
+        else console.log('Email sent via Mailjet');
+        return data;
       })
       .catch((err) => console.error('Email send failed:', err));
 
