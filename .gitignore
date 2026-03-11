@@ -40,3 +40,4 @@ services/mockHotelData.js
 
 # Lock file (Render runs npm install which generates its own)
 package-lock.json
+Mailjet-setup.md

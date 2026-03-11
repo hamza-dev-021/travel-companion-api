@@ -33,15 +33,7 @@ let server;
 connectDB().then(async () => {
     await ensureAdminUser();
 
-    // Periodic cleanup for expired remember-me tokens
-    const ONE_HOUR_MS = 60 * 60 * 1000;
-    setInterval(async () => {
-        try {
-            await RememberToken.deleteMany({ expiresAt: { $lte: new Date() } });
-        } catch (err) {
-            console.error('Error during RememberToken cleanup:', err);
-        }
-    }, ONE_HOUR_MS);
+    // Periodic cleanup moved to Supabase Scheduled Edge Function (Cron) hitting /api/cron/execute
 
     server = app.listen(PORT, () => {
         console.log(`Travel Companion API listening on port ${PORT} [${process.env.NODE_ENV || 'development'}]`);

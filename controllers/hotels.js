@@ -238,7 +238,7 @@ export const createHotel = asyncHandler(async (req, res, next) => {
   }
 
   // Validate address structure
-  if (!address.street || !address.city || !address.province || !address.coordinates) {
+  if (!address.hotelAddress || !address.city || !address.province || !address.coordinates) {
     return next(new ErrorResponse('Please provide complete address information', 400));
   }
 

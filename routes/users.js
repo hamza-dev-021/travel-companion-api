@@ -1,5 +1,5 @@
 import express from 'express';
-import { 
+import {
   getUsers,
   getUser,
   createUser,
@@ -12,7 +12,6 @@ import User from '../models/User.js';
 import { protect, authorize } from '../middleware/auth.js';
 import advancedResults from '../middleware/advancedResults.js';
 import { validateUser, validateObjectId, validatePagination, checkValidation } from '../middleware/validation.js';
-import { uploadSingle } from '../middleware/upload.js';
 
 const router = express.Router();
 

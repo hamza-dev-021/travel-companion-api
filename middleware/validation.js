@@ -44,9 +44,9 @@ export const validateHotel = [
     .trim()
     .isLength({ min: 10, max: 1000 })
     .withMessage('Description must be between 10 and 1000 characters'),
-  body('address.street')
+  body('address.hotelAddress')
     .notEmpty()
-    .withMessage('Street address is required'),
+    .withMessage('Hotel address is required'),
   body('address.city')
     .notEmpty()
     .withMessage('City is required'),

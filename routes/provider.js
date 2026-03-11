@@ -1,7 +1,6 @@
 import express from 'express';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
-import multer from 'multer';
 
 import User from '../models/User.js';
 import ServiceProvider from '../models/ServiceProvider.js';
@@ -11,8 +10,9 @@ import Room from '../models/Room.js';
 import Booking from '../models/Booking.js';
 import RememberToken from '../models/RememberToken.js';
 import { syncBookingStatuses } from '../utils/bookingAutomation.js';
-import { uploadPrivateDoc, uploadPublicImage, getPrivateDocSignedUrl } from '../utils/storage.js';
+import { generateSignedUploadUrl, getPrivateDocSignedUrl } from '../utils/storage.js';
 import { sendBookingStatusEmail } from '../utils/email.js';
+
 
 const router = express.Router();
 
@@ -27,23 +27,8 @@ const SESSION_COOKIE_OPTIONS = {
   sameSite: 'lax',
 };
 
-// Multer setup (in-memory) so we can forward files to Supabase
-const memoryStorage = multer.memoryStorage();
-
-// Max file sizes (bytes)
-const MAX_PDF_SIZE = 20 * 1024 * 1024; // 20 MB
-const MAX_IMAGE_SIZE = 15 * 1024 * 1024; // 15 MB per image
-
-// Generic uploader for verification files (we validate types/sizes in route handlers)
-const uploadPdf = multer({
-  storage: memoryStorage,
-  limits: { fileSize: MAX_PDF_SIZE }
-});
-
-const uploadImages = multer({
-  storage: memoryStorage,
-  limits: { fileSize: MAX_IMAGE_SIZE },
-});
+// Max file sizes handled entirely by frontend now
+// Generic uploader no longer needs memory storage buffers
 
 // Auth middleware for service providers with remember-me support
 async function requireServiceProvider(req, res, next) {
@@ -94,6 +79,44 @@ async function requireServiceProvider(req, res, next) {
     return res.status(500).json({ message: 'Internal server error.' });
   }
 }
+
+// Generate signed URLs for direct client uploads
+router.post('/upload-urls', requireServiceProvider, async (req, res) => {
+  try {
+    const { files, folderName } = req.body;
+
+    if (!Array.isArray(files) || files.length === 0) {
+      return res.status(400).json({ message: 'No files specified for upload.' });
+    }
+
+    const urls = [];
+    for (const file of files) {
+      // isPublic=true for images (rooms/hotels), isPublic=false for documents (PDFs)
+      const isPublic = file.type !== 'document';
+      
+      // Use the folderName provided by the frontend directly, allowing slashes for subfolders
+      let prefix = file.type === 'document' ? 'hotel-verification' : 'hotel-rooms'; // fallback
+      if (folderName) {
+        prefix = folderName; // Allow the frontend to define the exact folder structure (e.g. "Hotel/Room")
+      }
+
+      const uploadData = await generateSignedUploadUrl(file.filename, isPublic, prefix);
+      urls.push({
+        filename: file.filename,
+        originalId: file.id, // to map back on frontend
+        signedUrl: uploadData.signedUrl,
+        path: uploadData.path,
+        // compute final public URL immediately for images (since bucket is public)
+        publicUrl: isPublic ? `${process.env.SUPABASE_URL}/storage/v1/object/public/${process.env.SUPABASE_PUBLIC_BUCKET}/${uploadData.path}` : null
+      });
+    }
+
+    return res.json({ urls });
+  } catch (err) {
+    console.error('POST /upload-urls error:', err);
+    return res.status(500).json({ message: 'Failed to generate upload URLs.' });
+  }
+});
 
 // Get current provider verification + services
 router.get('/verification', requireServiceProvider, async (req, res) => {
@@ -339,8 +362,8 @@ router.get('/hotels/:hotelId/rooms', requireServiceProvider, async (req, res) =>
 });
 
 // Create a room for a specific approved hotel, enforcing the totalRooms limit
-// Accepts text fields + optional image files (field name: images)
-router.post('/hotels/:hotelId/rooms', requireServiceProvider, uploadImages.array('images', 2), async (req, res) => {
+// Expects images array to be passed in JSON body containing uploaded image URLs
+router.post('/hotels/:hotelId/rooms', requireServiceProvider, async (req, res) => {
   try {
     const user = req.user;
     const hotel = await HotelVerification.findOne({ _id: req.params.hotelId, userId: user._id });
@@ -364,6 +387,7 @@ router.post('/hotels/:hotelId/rooms', requireServiceProvider, uploadImages.array
       description,
       pricePerNight,
       maxGuests,
+      images = [],
     } = req.body;
 
     let amenities = [];
@@ -373,35 +397,13 @@ router.post('/hotels/:hotelId/rooms', requireServiceProvider, uploadImages.array
       amenities = [req.body.amenities.trim()];
     }
 
-    let images = [];
-    const files = req.files || [];
-    const imageFiles = files.filter(
-      (file) => file.mimetype && file.mimetype.startsWith('image/')
-    );
-
-    if (imageFiles.length < 1) {
+    if (!Array.isArray(images) || images.length < 1) {
       return res.status(400).json({ message: 'At least 1 image is required for the room.' });
     }
 
-    if (imageFiles.length > 2) {
+    if (images.length > 2) {
       return res.status(400).json({ message: 'Maximum 2 images are allowed for the room.' });
     }
-
-    // Explicit size check just in case multer limits were bypassed or not working right with array
-    const oversizedImage = imageFiles.find(file => file.size > MAX_IMAGE_SIZE);
-    if (oversizedImage) {
-      return res.status(400).json({ message: 'Each room image must be less than 15MB.' });
-    }
-
-    const safeHotelName = (hotel.name || 'hotel')
-      .toString()
-      .trim()
-      .replace(/[^a-zA-Z0-9]+/g, '-');
-
-    const safeNameBase = (roomNumber || 'room')
-      .toString()
-      .trim()
-      .replace(/[^a-zA-Z0-9]+/g, '-');
 
     const room = await Room.create({
       hotel: hotel._id,
@@ -411,43 +413,25 @@ router.post('/hotels/:hotelId/rooms', requireServiceProvider, uploadImages.array
       pricePerNight,
       maxGuests,
       amenities,
-      images: [], // Start empty, update in background
-      status: 'maintenance', // Temporarily maintenance while uploading
+      images: images,
+      status: 'available', // Immediately available
     });
 
-    res.status(201).json(room);
-
-    // Background Upload Process
-    (async () => {
-      try {
-        const uploadPromises = imageFiles.map((file, index) => {
-          const fileLabel = `${safeNameBase}-image-${index + 1}`;
-          return uploadPublicImage(file.buffer, fileLabel, file.mimetype, safeHotelName);
-        });
-
-        const uploadedImages = await Promise.all(uploadPromises);
-
-        await Room.findByIdAndUpdate(room._id, {
-          images: uploadedImages,
-          status: 'available', // Make available once images are uploaded
-        });
-      } catch (uploadError) {
-        console.error('Background room upload error:', uploadError);
-        // Delete the room if background upload fails, as requested
-        await Room.findByIdAndDelete(room._id);
-      }
-    })();
+    res.status(201).json({ room });
 
   } catch (err) {
     console.error('POST /provider/hotels/:hotelId/rooms error:', err);
     if (!res.headersSent) {
-      return res.status(500).json({ message: 'Internal server error.' });
+      if (err.code === 11000) {
+        return res.status(400).json({ message: 'A room with this number already exists in this hotel.' });
+      }
+      return res.status(500).json({ message: err.message || 'Internal server error.' });
     }
   }
 });
 
 // Bulk create rooms for a specific approved hotel
-router.post('/hotels/:hotelId/rooms/bulk', requireServiceProvider, uploadImages.array('images', 2), async (req, res) => {
+router.post('/hotels/:hotelId/rooms/bulk', requireServiceProvider, async (req, res) => {
   try {
     const user = req.user;
     const hotel = await HotelVerification.findOne({ _id: req.params.hotelId, userId: user._id });
@@ -466,6 +450,7 @@ router.post('/hotels/:hotelId/rooms/bulk', requireServiceProvider, uploadImages.
       description,
       pricePerNight,
       maxGuests,
+      images = [],
     } = req.body;
 
     // Parse room numbers (supports "101, 102, 110-115")
@@ -513,12 +498,9 @@ router.post('/hotels/:hotelId/rooms/bulk', requireServiceProvider, uploadImages.
       amenities = [req.body.amenities.trim()];
     }
 
-    const imageFiles = (req.files || []).filter(f => f.mimetype && f.mimetype.startsWith('image/'));
-    if (imageFiles.length < 1) {
+    if (!Array.isArray(images) || images.length < 1) {
       return res.status(400).json({ message: 'At least 1 image is required for the rooms.' });
     }
-
-    const safeHotelName = (hotel.name || 'hotel').toString().trim().replace(/[^a-zA-Z0-9]+/g, '-');
 
     const createdRooms = [];
     for (const num of roomNumbers) {
@@ -530,37 +512,22 @@ router.post('/hotels/:hotelId/rooms/bulk', requireServiceProvider, uploadImages.
         pricePerNight,
         maxGuests,
         amenities,
-        images: [],
-        status: 'maintenance',
+        images: images,
+        status: 'available',
       });
       createdRooms.push(room);
     }
 
     res.status(201).json({ message: `Successfully created ${createdRooms.length} rooms.`, rooms: createdRooms });
 
-    // Background upload shared for all rooms in this batch
-    (async () => {
-      try {
-        const uploadPromises = imageFiles.map((file, index) => {
-          const fileLabel = `bulk-room-${Date.now()}-${index + 1}`;
-          return uploadPublicImage(file.buffer, fileLabel, file.mimetype, safeHotelName);
-        });
-
-        const uploadedImages = await Promise.all(uploadPromises);
-
-        await Room.updateMany(
-          { _id: { $in: createdRooms.map(r => r._id) } },
-          { images: uploadedImages, status: 'available' }
-        );
-      } catch (err) {
-        console.error('Bulk room background upload error:', err);
-        await Room.deleteMany({ _id: { $in: createdRooms.map(r => r._id) } });
-      }
-    })();
-
   } catch (err) {
     console.error('POST /provider/hotels/:hotelId/rooms/bulk error:', err);
-    if (!res.headersSent) res.status(500).json({ message: 'Internal server error.' });
+    if (!res.headersSent) {
+      if (err.code === 11000) {
+        return res.status(400).json({ message: 'One or more of these room numbers already exist in this hotel.' });
+      }
+      return res.status(500).json({ message: err.message || 'Internal server error.' });
+    }
   }
 });
 
@@ -587,7 +554,7 @@ router.get('/hotels/:hotelId/rooms/:roomId/status', requireServiceProvider, asyn
 });
 
 // Update a room for a specific approved hotel owned by the current provider
-router.patch('/hotels/:hotelId/rooms/:roomId', requireServiceProvider, uploadImages.array('images', 2), async (req, res) => {
+router.patch('/hotels/:hotelId/rooms/:roomId', requireServiceProvider, async (req, res) => {
   try {
     const user = req.user;
     const hotel = await HotelVerification.findOne({ _id: req.params.hotelId, userId: user._id });
@@ -615,56 +582,49 @@ router.patch('/hotels/:hotelId/rooms/:roomId', requireServiceProvider, uploadIma
       'isAvailable',
       'status',
       'lastCleaned',
+      'images', // Allow frontend to update images directly
     ];
+
+    // Check for active bookings before allowing status/availability changes
+    const hasStatusOrAvailabilityChange = Object.prototype.hasOwnProperty.call(req.body, 'status') || Object.prototype.hasOwnProperty.call(req.body, 'isAvailable');
+
+    if (hasStatusOrAvailabilityChange) {
+      const mongoose = await import('mongoose'); // For booking model access if not imported
+      const Booking = mongoose.default.model('Booking');
+      const activeBookingsCount = await Booking.countDocuments({
+        room: room._id,
+        status: { $in: ['pending', 'confirmed', 'checked-in'] }
+      });
+
+      if (activeBookingsCount > 0) {
+        if (Object.prototype.hasOwnProperty.call(req.body, 'isAvailable') && req.body.isAvailable === false) {
+          return res.status(400).json({ message: 'Cannot set room to unavailable while there are active bookings.' });
+        }
+        if (req.body.status === 'occupied' || req.body.status === 'unavailable') {
+          return res.status(400).json({ message: 'Cannot set status to unavailable or occupied while the room has active bookings.' });
+        }
+      }
+
+      // Prevent manual assignment of 'occupied' ever, since that's handled by bookings checking in
+      if (req.body.status === 'occupied') {
+        return res.status(400).json({ message: 'Cannot manually set status to occupied. This is done automatically when guests check in.' });
+      }
+    }
 
     for (const field of allowedFields) {
       if (Object.prototype.hasOwnProperty.call(req.body, field)) {
         if (field === 'pricePerNight' || field === 'maxGuests') {
           room[field] = Number(req.body[field]);
-        } else if (field === 'amenities') {
-          room[field] = Array.isArray(req.body.amenities) ? req.body.amenities : [req.body.amenities];
+        } else if (field === 'amenities' || field === 'images') {
+          room[field] = Array.isArray(req.body[field]) ? req.body[field] : [req.body[field]];
         } else {
           room[field] = req.body[field];
         }
       }
     }
 
-    const files = req.files || [];
-    const imageFiles = files.filter(f => f.mimetype && f.mimetype.startsWith('image/'));
-
-    if (imageFiles.length > 0) {
-      const safeHotelName = (hotel.name || 'hotel').toString().trim().replace(/[^a-zA-Z0-9]+/g, '-');
-      const safeNameBase = (room.roomNumber || 'room').toString().trim().replace(/[^a-zA-Z0-9]+/g, '-');
-
-      // Update room status while uploading
-      room.status = 'maintenance';
-      await room.save();
-
-      // Background Upload
-      (async () => {
-        try {
-          const uploadPromises = imageFiles.map((file, index) => {
-            const fileLabel = `${safeNameBase}-edit-${Date.now()}-${index + 1}`;
-            return uploadPublicImage(file.buffer, fileLabel, file.mimetype, safeHotelName);
-          });
-          const uploadedImages = await Promise.all(uploadPromises);
-
-          // Replace images if provided, otherwise keep old ones? 
-          // Usually we replace if they upload something new in an "edit" context with limited slot
-          await Room.findByIdAndUpdate(room._id, {
-            images: uploadedImages,
-            status: 'available',
-          });
-        } catch (uploadError) {
-          console.error('Edit room upload error:', uploadError);
-        }
-      })();
-
-      return res.json({ message: 'Room updated. Images are being processed in background.', room });
-    }
-
     await room.save();
-    return res.json(room);
+    return res.json({ message: 'Room updated successfully.', room });
   } catch (err) {
     console.error('PATCH /provider/hotels/:hotelId/rooms/:roomId error:', err);
     return res.status(500).json({ message: 'Internal server error.' });
@@ -766,10 +726,6 @@ router.delete('/hotels/:hotelId/rooms/:roomId', requireServiceProvider, async (r
 router.post(
   '/verify/hotel',
   requireServiceProvider,
-  uploadPdf.fields([
-    { name: 'document', maxCount: 1 },
-    { name: 'images', maxCount: 2 },
-  ]),
   async (req, res) => {
     try {
       const user = req.user;
@@ -786,63 +742,35 @@ router.post(
       } = req.body;
 
       const address = {
-        street: req.body['address[street]'] || req.body.street || '',
-        city: req.body['address[city]'] || req.body.city || '',
-        province: req.body['address[province]'] || req.body.province || '',
-        postalCode: req.body['address[postalCode]'] || req.body.postalCode || '',
+        hotelAddress: (req.body.address?.hotelAddress || req.body['address[hotelAddress]'] || req.body.hotelAddress || '').trim(),
+        city: (req.body.address?.city || req.body['address[city]'] || req.body.city || '').trim(),
+        province: (req.body.address?.province || req.body['address[province]'] || req.body.province || '').trim(),
       };
 
-      // Support both nested-style keys (contact[phone], contact[email]) and flat ones
       const contact = {
-        phone: (req.body['contact[phone]'] || req.body.phone || '').trim(),
-        email: (req.body['contact[email]'] || req.body.email || '').trim(),
+        phone: (req.body.contact?.phone || req.body['contact[phone]'] || req.body.phone || '').trim(),
+        email: (req.body.contact?.email || req.body['contact[email]'] || req.body.email || '').trim(),
       };
 
-      const files = req.files || {};
-      const documentFile = Array.isArray(files.document) && files.document.length > 0 ? files.document[0] : null;
-      const imageFiles = Array.isArray(files.images) ? files.images.filter(f => f.mimetype.startsWith('image/')) : [];
-
-      let documentKey = '';
-      const safeHotelName = (name || 'hotel')
-        .toString()
-        .trim()
-        .replace(/[^a-zA-Z0-9]+/g, '-');
-
-      if (documentFile) {
-        if (documentFile.mimetype !== 'application/pdf') {
-          return res
-            .status(400)
-            .json({ message: 'Only PDF files are allowed for hotel verification documents.' });
-        }
-        if (documentFile.size && documentFile.size > MAX_PDF_SIZE) {
-          return res
-            .status(400)
-            .json({ message: 'Hotel verification PDF is too large (max 20 MB).' });
-        }
-
-        documentKey = await uploadPrivateDoc(
-          documentFile.buffer,
-          `${safeHotelName || 'hotel'}.pdf`,
-          documentFile.mimetype,
-          'hotel-verification'
-        );
+      if (!contact.phone) {
+        return res.status(400).json({ message: 'Phone number is required for the hotel.' });
       }
 
-      if (imageFiles.length < 1) {
+      const documentKey = req.body.documentKey || '';
+      const images = Array.isArray(req.body.images) ? req.body.images : [];
+
+      if (!documentKey) {
+          return res.status(400).json({ message: 'Business document PDF is required.' });
+      }
+
+      if (images.length < 1) {
         return res.status(400).json({ message: 'At least 1 image is required for the hotel.' });
       }
 
-      if (imageFiles.length > 2) {
+      if (images.length > 2) {
         return res.status(400).json({ message: 'Maximum 2 images are allowed for the hotel.' });
       }
 
-      // Explicit size check for hotel images
-      const oversizedImage = imageFiles.find(file => file.size > MAX_IMAGE_SIZE);
-      if (oversizedImage) {
-        return res.status(400).json({ message: 'Each hotel image must be less than 15MB.' });
-      }
-
-      // Save immediately without images/document to get an ID and return fast
       const hotel = new HotelVerification({
         userId: user._id,
         status: 'pending',
@@ -856,10 +784,8 @@ router.post(
         checkInTime,
         checkOutTime,
         cancellationPolicy,
-        documentUrl: '',
-        documentKey: '',
-        images: [],
-        imageUrl: '',
+        documentKey,
+        images,
       });
 
       await hotel.save();
@@ -881,44 +807,11 @@ router.post(
         }
       } catch (e) { console.error('Failed to notify admins of hotel verification', e); }
 
-      // Send response immediately
-      res.json({
-        message: 'Hotel verification submitted successfully. Uploading files in background...',
+      return res.json({
+        message: 'Hotel verification submitted successfully.',
         verification: hotel,
       });
 
-      // Background Upload Process
-      (async () => {
-        try {
-          let documentKey = '';
-          if (documentFile) {
-            documentKey = await uploadPrivateDoc(
-              documentFile.buffer,
-              `${safeHotelName || 'hotel'}.pdf`,
-              documentFile.mimetype,
-              'hotel-verification'
-            );
-          }
-
-          const uploadPromises = imageFiles.map((file, index) => {
-            const fileLabel = `${safeHotelName}-image-${index + 1}`;
-            return uploadPublicImage(file.buffer, fileLabel, file.mimetype, safeHotelName);
-          });
-
-          const uploadedImages = await Promise.all(uploadPromises);
-
-          // Update the existing document
-          await HotelVerification.findByIdAndUpdate(hotel._id, {
-            documentKey,
-            images: uploadedImages,
-            imageUrl: uploadedImages.length > 0 ? uploadedImages[0] : '',
-          });
-        } catch (uploadError) {
-          console.error('Background hotel upload error:', uploadError);
-          // Delete the hotel if background upload fails, as requested
-          await HotelVerification.findByIdAndDelete(hotel._id);
-        }
-      })();
 
     } catch (error) {
       console.error('Hotel verification error:', error);
@@ -953,7 +846,7 @@ router.get('/verify/hotel/:hotelId/status', requireServiceProvider, async (req, 
 });
 
 // Submit or update travel verification details
-router.post('/verify/travel', requireServiceProvider, uploadPdf.single('document'), async (req, res) => {
+router.post('/verify/travel', requireServiceProvider, async (req, res) => {
   try {
     const user = req.user;
     const {
@@ -961,31 +854,8 @@ router.post('/verify/travel', requireServiceProvider, uploadPdf.single('document
       licenseNumber,
       offersCar,
       offersBus,
+      documentKey,
     } = req.body;
-
-    let documentKey = '';
-    if (req.file) {
-      if (req.file.mimetype !== 'application/pdf') {
-        return res.status(400).json({ message: 'Only PDF files are allowed for travel verification documents.' });
-      }
-      if (req.file.size && req.file.size > MAX_PDF_SIZE) {
-        return res
-          .status(400)
-          .json({ message: 'Travel verification PDF is too large (max 20 MB).' });
-      }
-
-      const safeCompanyName = (companyName || 'travel')
-        .toString()
-        .trim()
-        .replace(/[^a-zA-Z0-9]+/g, '-');
-
-      documentKey = await uploadPrivateDoc(
-        req.file.buffer,
-        `${safeCompanyName || 'travel'}.pdf`,
-        req.file.mimetype,
-        'travel-verification'
-      );
-    }
 
     let travel = await TravelVerification.findOne({ userId: user._id });
     if (!travel) {

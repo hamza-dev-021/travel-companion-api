@@ -36,11 +36,17 @@ export const protect = async (req, res, next) => {
     const user = await User.findById(decoded.id);
     
     if (!user) {
+      res.clearCookie('tc_token');
+      res.clearCookie('token');
+      res.clearCookie('remember_me');
       return next(new ErrorResponse('User not found', 401));
     }
 
     // Check if user is active
     if (!user.isActive) {
+      res.clearCookie('tc_token');
+      res.clearCookie('token');
+      res.clearCookie('remember_me');
       return next(new ErrorResponse('User account is deactivated', 401));
     }
 

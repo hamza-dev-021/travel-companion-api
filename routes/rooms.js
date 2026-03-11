@@ -8,13 +8,11 @@ import {
   createRoom,
   updateRoom,
   deleteRoom,
-  updateRoomStatus,
-  uploadRoomImages
+  updateRoomStatus
 } from '../controllers/rooms.js';
 import { createBooking } from '../controllers/bookings.js';
 import { protect, authorize } from '../middleware/auth.js';
 import { validateRoom, validateObjectId, validatePagination, validateSearch, checkValidation } from '../middleware/validation.js';
-import { uploadMultiple } from '../middleware/upload.js';
 
 const router = express.Router();
 
@@ -37,8 +35,7 @@ router.route('/:id/availability')
 router.route('/:id/status')
   .put(protect, authorize('admin'), validateObjectId(), checkValidation, updateRoomStatus);
 
-router.route('/:id/images')
-  .put(protect, authorize('admin'), validateObjectId(), uploadMultiple('files', 5), checkValidation, uploadRoomImages);
+
 
 // Booking route
 router.route('/:id/bookings')

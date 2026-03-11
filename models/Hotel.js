@@ -13,9 +13,9 @@ const HotelSchema = new mongoose.Schema({
     maxlength: [1000, 'Description cannot be more than 1000 characters']
   },
   address: {
-    street: {
+    hotelAddress: {
       type: String,
-      required: [true, 'Please add street address']
+      required: [true, 'Please add hotel address']
     },
     city: {
       type: String,
@@ -24,10 +24,6 @@ const HotelSchema = new mongoose.Schema({
     province: {
       type: String,
       required: [true, 'Please add province']
-    },
-    postalCode: {
-      type: String,
-      maxlength: [10, 'Postal code cannot be more than 10 characters']
     },
     coordinates: {
       latitude: {
@@ -167,7 +163,7 @@ HotelSchema.index({
 
 // Virtual for full address
 HotelSchema.virtual('fullAddress').get(function() {
-  return `${this.address.street}, ${this.address.city}, ${this.address.province}, Pakistan`;
+  return `${this.address.hotelAddress}, ${this.address.city}, ${this.address.province}, Pakistan`;
 });
 
 // Virtual for primary image

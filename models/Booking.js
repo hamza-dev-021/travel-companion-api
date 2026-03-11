@@ -89,7 +89,7 @@ const BookingSchema = new mongoose.Schema({
     },
     phone: {
       type: String,
-      required: [true, 'Please add guest phone']
+      required: false
     }
   },
   createdAt: {

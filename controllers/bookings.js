@@ -235,8 +235,8 @@ export const createBooking = asyncHandler(async (req, res, next) => {
     return next(new ErrorResponse('Number of guests must be between 1 and 20', 400));
   }
 
-  if (!guestDetails || !guestDetails.firstName || !guestDetails.lastName || !guestDetails.email || !guestDetails.phone) {
-    return next(new ErrorResponse('Please provide complete guest details', 400));
+  if (!guestDetails || !guestDetails.firstName || !guestDetails.lastName || !guestDetails.email) {
+    return next(new ErrorResponse('Please provide complete guest details (firstName, lastName, email)', 400));
   }
 
   // Validate dates

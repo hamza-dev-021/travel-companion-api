@@ -23,39 +23,53 @@ const parseFrom = (from) => {
 const SPAM_HELP = `<p style="color: #94a3b8; font-size: 11px; text-align: center; margin-top: 8px;">Can't find this email? Please check your <strong>Spam</strong> or <strong>Junk</strong> folder and mark it as "Not Spam" to receive future emails in your inbox.</p>`;
 
 /**
- * Helper: send email via Mailjet HTTP API with error logging.
+ * OPTION 1: Supabase Edge Function (ACTIVE)
+ * Use this to bypass Render SMTP restrictions and Mailjet limits.
  */
 const sendEmail = async ({ from, to, subject, html }, fireAndForget = false) => {
-  const recipients = (Array.isArray(to) ? to : [to]).map(email => ({ Email: email }));
-  const sender = parseFrom(from);
-  // Strip HTML to create plain text version (improves deliverability / spam score)
-  const textPart = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  const SUPABASE_URL = process.env.SUPABASE_URL;
+  const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  // If user provided a specific URL in .env, use it. Otherwise construct it.
+  const FUNCTION_URL = process.env.SUPABASE_EMAIL_FUNCTION_URL || `${SUPABASE_URL}/functions/v1/send-email`;
 
-  const send = () =>
-    fetch(MAILJET_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Basic ' + Buffer.from(`${MAILJET_API_KEY}:${MAILJET_SECRET_KEY}`).toString('base64'),
-      },
-      body: JSON.stringify({
-        Messages: [{ From: sender, To: recipients, Subject: subject, HTMLPart: html, TextPart: textPart }],
-      }),
-    })
-      .then(async (res) => {
-        const data = await res.json();
-        if (!res.ok) console.error('Mailjet error:', JSON.stringify(data));
-        else console.log('Email sent via Mailjet');
-        return data;
-      })
-      .catch((err) => console.error('Email send failed:', err));
+  const sender = parseFrom(from);
+  const fromName = sender.Name || 'Travel Companion';
+
+  const send = async () => {
+    try {
+      const response = await fetch(FUNCTION_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        },
+        body: JSON.stringify({
+          to: Array.isArray(to) ? to : [to],
+          subject: subject,
+          html: html,
+          fromName: fromName,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        console.error('Supabase Edge Function error:', JSON.stringify(data));
+      } else {
+        console.log('Email sent via Supabase Edge Function');
+      }
+      return data;
+    } catch (err) {
+      console.error('Email send failed via Edge Function:', err);
+    }
+  };
 
   if (fireAndForget) {
-    send(); // don't await
+    send();
     return;
   }
   return send();
 };
+
 
 /**
  * Send a password reset email with a link to the reset page.

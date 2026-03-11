@@ -4,8 +4,13 @@ const errorHandler = (err, req, res, next) => {
   let error = { ...err };
   error.message = err.message;
 
-  // Log to console for dev
-  console.error(err.stack);
+  // Log to console for dev (exclude predictable client errors to keep logs clean)
+  if (err.statusCode !== 401 && err.statusCode !== 404 && err.status !== 401 && err.status !== 404) {
+    console.error(err.stack);
+  } else {
+    // Just log the message nicely instead of the whole stack trace
+    console.warn(`[${err.statusCode || err.status || 400}] ${err.message}`);
+  }
 
   // Mongoose bad ObjectId
   if (err.name === 'CastError') {

@@ -27,6 +27,7 @@ import profileRoutes from './routes/profile.js';
 import reviewRoutes from './routes/reviewRoutes.js';
 import notificationRoutes from './routes/notifications.js';
 import statsRoutes from './routes/statsRoutes.js';
+import cronRoutes from './routes/cron.js';
 
 
 dotenv.config();
@@ -148,6 +149,7 @@ app.use('/api/profile', profileRoutes);
 app.use('/api/reviews', reviewRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/stats', statsRoutes);
+app.use('/api/cron', cronRoutes);
 
 // ─── 404 handler (unknown routes) ───────────────────────
 app.use((req, res) => {

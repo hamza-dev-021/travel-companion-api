@@ -3,7 +3,7 @@ import asyncHandler from '../middleware/async.js';
 import User from '../models/User.js';
 import path from 'path';
 import fs from 'fs';
-import { uploadSingle } from '../middleware/upload.js';
+
 
 // @desc    Get all users
 // @route   GET /api/v1/users

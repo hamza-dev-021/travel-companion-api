@@ -9,12 +9,10 @@ import {
   getFeaturedHotels,
   createHotel,
   updateHotel,
-  deleteHotel,
-  uploadHotelImages
+  deleteHotel
 } from '../controllers/hotels.js';
 import { protect, authorize } from '../middleware/auth.js';
 import { validateHotel, validateObjectId, validatePagination, validateSearch, checkValidation } from '../middleware/validation.js';
-import { uploadMultiple } from '../middleware/upload.js';
 
 const router = express.Router();
 
@@ -43,7 +41,6 @@ router.route('/:id')
   .put(protect, authorize('admin'), validateObjectId(), validateHotel, checkValidation, updateHotel)
   .delete(protect, authorize('admin'), validateObjectId(), checkValidation, deleteHotel);
 
-router.route('/:id/images')
-  .put(protect, authorize('admin'), validateObjectId(), uploadMultiple('files', 5), checkValidation, uploadHotelImages);
+
 
 export default router;

@@ -99,3 +99,37 @@ export async function getPrivateDocSignedUrl(objectName, expiresInSeconds = 300)
 
   return data.signedUrl;
 }
+
+/**
+ * Generate a pre-signed URL for direct client-side uploading.
+ * @param {string} filename Original filename to derive extension/safe name
+ * @param {boolean} isPublic Which bucket to use
+ * @param {string} prefix Folder prefix
+ * @returns {Promise<{ signedUrl: string, path: string }>} URL to PUT and the final path to save to DB
+ */
+export async function generateSignedUploadUrl(filename, isPublic = true, prefix = 'hotel-rooms') {
+  const client = getSupabaseClient();
+  const BUCKET = isPublic ? process.env.SUPABASE_PUBLIC_BUCKET : process.env.SUPABASE_PRIVATE_BUCKET;
+  
+  if (!BUCKET) {
+    throw new Error(`SUPABASE_${isPublic ? 'PUBLIC' : 'PRIVATE'}_BUCKET is not configured`);
+  }
+
+  const safeName = filename.replace(/[^a-zA-Z0-9.\-_]/g, '_');
+  const objectPath = `${prefix}/${Date.now()}-${safeName}`;
+
+  // URL valid for 1 hour
+  const { data, error } = await client.storage
+    .from(BUCKET)
+    .createSignedUploadUrl(objectPath, { expiresIn: 3600 });
+
+  if (error) {
+    throw error;
+  }
+
+  return {
+    signedUrl: data.signedUrl,
+    token: data.token,
+    path: objectPath, // Frontend needs to send this back to us after successful upload
+  };
+}

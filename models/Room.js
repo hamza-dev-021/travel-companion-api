@@ -44,7 +44,7 @@ const RoomSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['available', 'occupied', 'maintenance', 'cleaning'],
+    enum: ['available', 'occupied', 'maintenance', 'cleaning', 'unavailable'],
     default: 'available'
   },
   lastCleaned: {
@@ -58,6 +58,18 @@ const RoomSchema = new mongoose.Schema({
 }, {
   toJSON: { virtuals: true },
   toObject: { virtuals: true }
+});
+
+// Sync isAvailable with status
+RoomSchema.pre('save', function(next) {
+  if (this.isModified('status')) {
+    if (this.status === 'available' || this.status === 'occupied' || this.status === 'cleaning' || this.status === 'maintenance') {
+      this.isAvailable = true;
+    } else if (this.status === 'unavailable') {
+      this.isAvailable = false;
+    }
+  }
+  next();
 });
 
 // Index for efficient searching

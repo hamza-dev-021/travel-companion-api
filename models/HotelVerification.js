@@ -12,10 +12,9 @@ const hotelVerificationSchema = new mongoose.Schema(
     name: { type: String, trim: true },
     description: { type: String, trim: true },
     address: {
-      street: { type: String, trim: true },
+      hotelAddress: { type: String, trim: true },
       city: { type: String, trim: true },
       province: { type: String, trim: true },
-      postalCode: { type: String, trim: true },
     },
     contact: {
       phone: { type: String, trim: true },
