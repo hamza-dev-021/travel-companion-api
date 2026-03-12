@@ -10,7 +10,7 @@ import Room from '../models/Room.js';
 import Booking from '../models/Booking.js';
 import RememberToken from '../models/RememberToken.js';
 import { syncBookingStatuses } from '../utils/bookingAutomation.js';
-import { generateSignedUploadUrl, getPrivateDocSignedUrl } from '../utils/storage.js';
+import { generateSignedUploadUrl, getPrivateDocSignedUrl, deleteFiles } from '../utils/storage.js';
 import { sendBookingStatusEmail } from '../utils/email.js';
 
 
@@ -845,6 +845,150 @@ router.get('/verify/hotel/:hotelId/status', requireServiceProvider, async (req, 
   }
 });
 
+// Delete hotel and all associated rooms + Supabase data
+router.delete('/verify/hotel/:id', requireServiceProvider, async (req, res) => {
+  try {
+    const hotel = await HotelVerification.findOne({ _id: req.params.id, userId: req.user._id });
+    if (!hotel) {
+      return res.status(404).json({ message: 'Hotel not found or unauthorized.' });
+    }
+
+    // 1. Check for active bookings in associated rooms
+    const hotelRooms = await Room.find({ hotel: hotel._id });
+    const roomIds = hotelRooms.map(r => r._id);
+    
+    const activeBookings = await Booking.findOne({
+      room: { $in: roomIds },
+      status: { $in: ['pending', 'confirmed', 'checked-in'] }
+    });
+
+    if (activeBookings) {
+      return res.status(400).json({ 
+        message: 'Cannot delete hotel with active bookings (pending, confirmed, or checked-in). Please manage or cancel bookings first.' 
+      });
+    }
+
+    // 2. Collect files to delete from Supabase
+    const publicFiles = [];
+    const privateFiles = [];
+
+    // Hotel images (public)
+    if (hotel.images && hotel.images.length > 0) {
+      publicFiles.push(...hotel.images.map(url => {
+        try {
+          const urlObj = new URL(url);
+          const pathParts = urlObj.pathname.split('/public/');
+          if (pathParts.length > 1) {
+             const parts = pathParts[1].split('/');
+             parts.shift(); // remove bucket name
+             return parts.join('/');
+          }
+          return null;
+        } catch (e) { return null; }
+      }).filter(Boolean));
+    }
+
+    // Hotel document (private)
+    if (hotel.documentKey) {
+      privateFiles.push(hotel.documentKey);
+    }
+
+    // Room images (public)
+    for (const room of hotelRooms) {
+      if (room.images && room.images.length > 0) {
+        publicFiles.push(...room.images.map(url => {
+          try {
+            const urlObj = new URL(url);
+            const pathParts = urlObj.pathname.split('/public/');
+            if (pathParts.length > 1) {
+               const parts = pathParts[1].split('/');
+               parts.shift(); // remove bucket name
+               return parts.join('/');
+            }
+            return null;
+          } catch (e) { return null; }
+        }).filter(Boolean));
+      }
+    }
+
+    // 3. Delete files from Supabase (best effort)
+    try {
+      if (publicFiles.length > 0) await deleteFiles(publicFiles, true);
+      if (privateFiles.length > 0) await deleteFiles(privateFiles, false);
+    } catch (err) {
+      console.error('Supabase cleanup error during hotel delete:', err);
+    }
+
+    // 4. Delete DB records
+    const Review = (await import('../models/Review.js')).default;
+    await Review.deleteMany({ service: hotel._id });
+    await Room.deleteMany({ hotel: hotel._id });
+    await HotelVerification.findByIdAndDelete(hotel._id);
+
+    return res.json({ message: 'Hotel and all associated rooms, reviews and data deleted successfully.' });
+
+  } catch (error) {
+    console.error('Delete hotel error:', error);
+    return res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+// Update existing hotel verification
+router.put('/verify/hotel/:id', requireServiceProvider, async (req, res) => {
+  try {
+    const user = req.user;
+    const {
+      name,
+      description,
+      address,
+      contact,
+      starRating,
+      totalRooms,
+      amenities,
+      checkInTime,
+      checkOutTime,
+      cancellationPolicy,
+      documentKey,
+      images,
+    } = req.body;
+
+    const hotel = await HotelVerification.findOne({ _id: req.params.id, userId: user._id });
+    if (!hotel) {
+      return res.status(404).json({ message: 'Hotel not found or unauthorized.' });
+    }
+
+    // Update fields
+    if (name) hotel.name = name;
+    if (description) hotel.description = description;
+    if (address) hotel.address = address;
+    if (contact) hotel.contact = contact;
+    if (starRating) hotel.starRating = starRating;
+    if (totalRooms) hotel.totalRooms = totalRooms;
+    if (amenities) hotel.amenities = amenities;
+    if (checkInTime) hotel.checkInTime = checkInTime;
+    if (checkOutTime) hotel.checkOutTime = checkOutTime;
+    if (cancellationPolicy) hotel.cancellationPolicy = cancellationPolicy;
+    if (documentKey) hotel.documentKey = documentKey;
+    if (images) hotel.images = images;
+    
+    // Set status back to pending if they changed anything major (optional, but safer)
+    hotel.status = 'pending';
+    hotel.rejectionReason = undefined;
+
+    await hotel.save();
+
+    return res.json({
+      message: 'Hotel verification updated successfully.',
+      verification: hotel,
+    });
+  } catch (error) {
+    console.error('Hotel update error:', error);
+    return res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+
+
 // Submit or update travel verification details
 router.post('/verify/travel', requireServiceProvider, async (req, res) => {
   try {
@@ -936,7 +1080,7 @@ router.get('/reviews', requireServiceProvider, async (req, res) => {
     const rawReviews = await Review.find({ service: { $in: hotelIds } })
       .populate({
         path: 'user',
-        select: 'firstName lastName photoUrl email',
+        select: 'firstName lastName photoUrl email preferences',
       })
       .populate({
         path: 'service',
@@ -956,12 +1100,25 @@ router.get('/reviews', requireServiceProvider, async (req, res) => {
       .limit(parseInt(limit))
       .lean();
 
-    // Map service to hotel for frontend compatibility + add photoUrl for lean results
-    const reviews = rawReviews.map((r) => ({
-      ...r,
-      hotel: r.service,
-      user: r.user ? { ...r.user, photoUrl: `/api/profile/${r.user._id}/photo` } : r.user,
-    }));
+    // Map service to hotel for frontend compatibility + add photoUrl with privacy check
+    const reviews = rawReviews.map((r) => {
+      const review = { ...r, hotel: r.service };
+      if (review.user) {
+        const user = { ...review.user };
+        // Manual hydration for legacy/lean() compatibility
+        if (!user.photoUrl) {
+          user.photoUrl = `/api/profile/${user._id}/photo`;
+        }
+        
+        const isPhotoPublic = user.preferences?.publicProfilePhoto === true;
+        if (!isPhotoPublic) {
+          delete user.photoUrl;
+        }
+        delete user.preferences;
+        review.user = user;
+      }
+      return review;
+    });
 
     return res.json({
       reviews,
@@ -984,6 +1141,7 @@ router.get('/settings', requireServiceProvider, async (req, res) => {
       data: {
         notifications: user?.preferences?.notifications ?? true,
         emails: user?.preferences?.emails ?? true,
+        currency: user?.preferences?.currency ?? 'Rs.',
       },
     });
   } catch (error) {
@@ -994,10 +1152,10 @@ router.get('/settings', requireServiceProvider, async (req, res) => {
 
 router.patch('/settings', requireServiceProvider, async (req, res) => {
   try {
-    const allowed = ['notifications', 'emails'];
+    const allowed = ['notifications', 'emails', 'currency'];
     const update = {};
     for (const key of allowed) {
-      if (typeof req.body[key] === 'boolean') {
+      if (req.body[key] !== undefined) {
         update[`preferences.${key}`] = req.body[key];
       }
     }

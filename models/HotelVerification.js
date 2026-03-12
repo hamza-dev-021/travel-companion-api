@@ -33,9 +33,38 @@ const hotelVerificationSchema = new mongoose.Schema(
     images: [{ type: String, trim: true }],
     isActive: { type: Boolean, default: true },
     rejectionReason: { type: String, trim: true },
+    schemaVersion: { type: Number, default: 1 },
   },
   { timestamps: true }
 );
+
+/**
+ * Lazy Migration / Data Healing Logic for Hotels
+ * Ensures that old hotel verification records are automatically updated 
+ * to the latest data shape when they are accessed.
+ * @returns {boolean} True if the document was modified and needs to be saved.
+ */
+hotelVerificationSchema.methods.ensureConsistency = function () {
+  let modified = false;
+
+  // Migration V2: Ensure arrays are initialized if missing
+  if (!this.amenities) {
+    this.amenities = [];
+    modified = true;
+  }
+  if (!this.images) {
+    this.images = [];
+    modified = true;
+  }
+
+  // Set latest schema version
+  if (this.schemaVersion < 2) {
+    this.schemaVersion = 2;
+    modified = true;
+  }
+
+  return modified;
+};
 
 // Indexes for efficient querying
 hotelVerificationSchema.index({ status: 1 });

@@ -280,6 +280,13 @@ router.get('/me', async (req, res) => {
       try {
         const payload = jwt.verify(token, JWT_SECRET);
         user = await User.findById(payload.id);
+        
+        // Trigger Lazy Migration for User
+        if (user && typeof user.ensureConsistency === 'function') {
+          if (user.ensureConsistency()) {
+            await user.save();
+          }
+        }
       } catch {
         // ignore invalid/expired JWT; we'll fall back to remember-me below
       }
@@ -293,6 +300,12 @@ router.get('/me', async (req, res) => {
       if (stored && stored.expiresAt > new Date()) {
         user = await User.findById(stored.userId);
         if (user) {
+          // Trigger Lazy Migration for User
+          if (typeof user.ensureConsistency === 'function') {
+            if (user.ensureConsistency()) {
+              await user.save();
+            }
+          }
           // Re-issue a fresh JWT session cookie
           const newJwt = createJwtForUser(user);
           res.cookie(COOKIE_NAME, newJwt, SESSION_COOKIE_OPTIONS);
@@ -317,6 +330,14 @@ router.get('/me', async (req, res) => {
       const provider = await ServiceProvider.findOne({ userId: user._id });
       if (provider) services = Array.isArray(provider.services) ? provider.services : [];
       hotelVerification = await HotelVerification.findOne({ userId: user._id });
+
+      // Trigger Lazy Migration for HotelVerification
+      if (hotelVerification && typeof hotelVerification.ensureConsistency === 'function') {
+        if (hotelVerification.ensureConsistency()) {
+          await hotelVerification.save();
+        }
+      }
+
       travelVerification = await TravelVerification.findOne({ userId: user._id });
     }
 
@@ -381,6 +402,13 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ message: 'Invalid credentials.' });
     }
 
+    // Trigger Lazy Migration for User on Login
+    if (typeof user.ensureConsistency === 'function') {
+      if (user.ensureConsistency()) {
+        await user.save();
+      }
+    }
+
     if (user.isActive === false) {
       return res.status(403).json({ message: 'Your account has been deactivated. Please contact admin for activation.' });
     }
@@ -405,6 +433,14 @@ router.post('/login', async (req, res) => {
       const provider = await ServiceProvider.findOne({ userId: user._id });
       if (provider) services = Array.isArray(provider.services) ? provider.services : [];
       hotelVerification = await HotelVerification.findOne({ userId: user._id });
+
+      // Trigger Lazy Migration for HotelVerification on Login
+      if (hotelVerification && typeof hotelVerification.ensureConsistency === 'function') {
+        if (hotelVerification.ensureConsistency()) {
+          await hotelVerification.save();
+        }
+      }
+
       travelVerification = await TravelVerification.findOne({ userId: user._id });
     }
 

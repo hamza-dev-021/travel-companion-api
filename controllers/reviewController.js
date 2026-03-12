@@ -61,14 +61,37 @@ export const getServiceReviews = asyncHandler(async (req, res, next) => {
     const { page = 1, limit = 10 } = req.query;
     const startIndex = (page - 1) * parseInt(limit);
 
-    const reviews = await Review.find({ service: req.params.serviceId })
+    let reviews = await Review.find({ service: req.params.serviceId })
         .populate({
             path: 'user',
-            select: 'firstName lastName photoUrl' // Assuming these are the user fields
+            select: 'firstName lastName photoUrl preferences'
         })
         .skip(startIndex)
         .limit(parseInt(limit))
-        .sort({ createdAt: -1 });
+        .sort({ createdAt: -1 })
+        .lean();
+
+    // Sanitize user photos based on privacy settings
+    reviews = reviews.map(review => {
+        if (review.user) {
+            // Clone user object to avoid shared reference mutations
+            const user = { ...review.user };
+
+            // Robust hydration for legacy users
+            if (!user.photoUrl) {
+                user.photoUrl = `/api/profile/${user._id}/photo`;
+            }
+
+            const isPhotoPublic = user.preferences?.publicProfilePhoto === true;
+            if (!isPhotoPublic) {
+                delete user.photoUrl;
+            }
+            delete user.preferences;
+            
+            review.user = user;
+        }
+        return review;
+    });
 
     const total = await Review.countDocuments({ service: req.params.serviceId });
 
@@ -108,13 +131,36 @@ export const getReviews = asyncHandler(async (req, res, next) => {
     }
 
     let query = Review.find(filter)
-        .populate({ path: 'user', select: 'firstName lastName photoUrl' })
+        .populate({ path: 'user', select: 'firstName lastName photoUrl preferences' })
         .populate({ path: 'service', model: 'HotelVerification', select: 'name address.city images' })
         .sort(sortOption)
         .skip(startIndex)
-        .limit(limitNum);
+        .limit(limitNum)
+        .lean();
 
     let reviews = await query;
+
+    // Sanitize user photos based on privacy settings
+    reviews = reviews.map(review => {
+        if (review.user) {
+            // Clone user object to avoid shared reference mutations
+            const user = { ...review.user };
+
+            // Robust hydration for legacy users
+            if (!user.photoUrl) {
+                user.photoUrl = `/api/profile/${user._id}/photo`;
+            }
+
+            const isPhotoPublic = user.preferences?.publicProfilePhoto === true;
+            if (!isPhotoPublic) {
+                delete user.photoUrl;
+            }
+            delete user.preferences;
+
+            review.user = user;
+        }
+        return review;
+    });
     let total = await Review.countDocuments(filter);
 
     // Client-side text search (lightweight — no text index required)

@@ -133,3 +133,29 @@ export async function generateSignedUploadUrl(filename, isPublic = true, prefix 
     path: objectPath, // Frontend needs to send this back to us after successful upload
   };
 }
+
+/**
+ * Delete one or more files from Supabase storage.
+ * @param {string[]} paths Array of object paths to delete
+ * @param {boolean} isPublic Which bucket to use
+ */
+export async function deleteFiles(paths, isPublic = true) {
+  if (!paths || paths.length === 0) return;
+  const client = getSupabaseClient();
+  const BUCKET = isPublic ? process.env.SUPABASE_PUBLIC_BUCKET : process.env.SUPABASE_PRIVATE_BUCKET;
+  
+  if (!BUCKET) {
+    throw new Error(`SUPABASE_${isPublic ? 'PUBLIC' : 'PRIVATE'}_BUCKET is not configured`);
+  }
+
+  const { error } = await client.storage
+    .from(BUCKET)
+    .remove(paths);
+
+  if (error) {
+    console.error(`Supabase delete error in bucket ${BUCKET}:`, error);
+    // We don't throw here to avoid blocking the main deletion flow if one storage delete fails
+    // unless you want strict consistency.
+  }
+}
+

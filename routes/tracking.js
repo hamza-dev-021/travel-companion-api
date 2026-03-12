@@ -45,6 +45,17 @@ router.get('/history', protect, async (req, res) => {
   }
 });
 
+// Clear tracking history for the logged-in user
+router.delete('/history', protect, async (req, res) => {
+  try {
+    await TrackingHistory.deleteMany({ user: req.user._id });
+    return res.json({ message: 'Tracking history cleared successfully.' });
+  } catch (error) {
+    console.error('Error clearing tracking history:', error);
+    res.status(500).json({ message: 'Server error clearing history.' });
+  }
+});
+
 // Get emergency contacts
 router.get('/emergency-contacts', protect, async (req, res) => {
   try {

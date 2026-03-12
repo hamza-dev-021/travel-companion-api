@@ -274,6 +274,8 @@ router.get('/settings', requireAuth, async (req, res) => {
             data: {
                 notifications: user?.preferences?.notifications ?? true,
                 emails: user?.preferences?.emails ?? true,
+                publicProfilePhoto: user?.preferences?.publicProfilePhoto ?? false,
+                currency: user?.preferences?.currency ?? 'Rs.',
             },
         });
     } catch (error) {
@@ -285,10 +287,10 @@ router.get('/settings', requireAuth, async (req, res) => {
 // ─── PATCH /profile/settings ─────────────────────────────────
 router.patch('/settings', requireAuth, async (req, res) => {
     try {
-        const allowed = ['notifications', 'emails'];
+        const allowed = ['notifications', 'emails', 'publicProfilePhoto', 'currency'];
         const update = {};
         for (const key of allowed) {
-            if (typeof req.body[key] === 'boolean') {
+            if (req.body[key] !== undefined) {
                 update[`preferences.${key}`] = req.body[key];
             }
         }

@@ -3,11 +3,22 @@ import HotelVerification from '../models/HotelVerification.js';
 import Room from '../models/Room.js';
 
 export const getVerifiedHotels = asyncHandler(async (req, res) => {
-  const { city, checkIn, checkOut, guests, page = 1, limit = 24 } = req.query;
+  const { city, checkIn, checkOut, guests, page = 1, limit = 24, sort } = req.query;
 
   const filters = { status: 'approved' };
   if (city) {
     filters['address.city'] = new RegExp(city, 'i');
+  }
+
+  // Handle Sort Option
+  let sortOption = { createdAt: -1 }; // default
+  if (sort === 'popular') {
+    // Sort by high rating first, then by number of reviews to break ties
+    sortOption = { averageRating: -1, totalReviews: -1, createdAt: -1 };
+  } else if (sort === 'rating') {
+    sortOption = { averageRating: -1 };
+  } else if (sort === 'newest') {
+    sortOption = { createdAt: -1 };
   }
 
   // If checkIn/checkOut/guests are provided, we need to filter by availability
@@ -55,7 +66,7 @@ export const getVerifiedHotels = asyncHandler(async (req, res) => {
   const [total, hotels] = await Promise.all([
     HotelVerification.countDocuments(filters),
     HotelVerification.find(filters)
-      .sort({ createdAt: -1 })
+      .sort(sortOption)
       .skip(startIndex)
       .limit(Number(limit))
       .lean(),

@@ -5,9 +5,9 @@ dotenv.config();
 export const OTP_TIMER_SECONDS = 120;
 export const OTP_TIMER_MINUTES = Math.floor(OTP_TIMER_SECONDS / 60);
 
-const MAILJET_API_KEY = process.env.MAILJET_API_KEY;
-const MAILJET_SECRET_KEY = process.env.MAILJET_SECRET_KEY;
-const MAILJET_URL = 'https://api.mailjet.com/v3.1/send';
+// const MAILJET_API_KEY = process.env.MAILJET_API_KEY;
+// const MAILJET_SECRET_KEY = process.env.MAILJET_SECRET_KEY;
+// const MAILJET_URL = 'https://api.mailjet.com/v3.1/send';
 
 const SENDER_EMAIL = process.env.GMAIL_USER || 'team.travelcompanion@gmail.com';
 const FROM_EMAIL = process.env.EMAIL_FROM || `Travel Companion <${SENDER_EMAIL}>`;
@@ -112,8 +112,8 @@ export const sendOtpEmail = async (to, otp, type = 'password-reset') => {
   }
 
   const otpDigits = String(otp).split('').map(d =>
-    `<td style="padding: 0 4px;">
-      <div style="width: 36px; height: 48px; line-height: 48px; text-align: center; border-radius: 8px; background: #eef2ff; font-size: 24px; font-weight: 700; color: #465FFF; font-family: 'Segoe UI', Tahoma, monospace;">${d}</div>
+    `<td style="padding: 0 2px;">
+      <div style="width: 30px; height: 40px; line-height: 40px; text-align: center; border-radius: 6px; background: #eef2ff; font-size: 20px; font-weight: 700; color: #465FFF; font-family: 'Segoe UI', Tahoma, monospace; border: 1px solid #c7d2fe;">${d}</div>
     </td>`
   ).join('');
 
@@ -151,8 +151,10 @@ export const sendBookingStatusEmail = async (booking, status, reason = '') => {
 
   const { default: UserModel } = await import('../models/User.js');
   const recipientId = booking.user._id || booking.user;
-  const prefs = await UserModel.findById(recipientId).select('preferences').lean();
-  if (prefs?.preferences?.emails === false) return;
+  const user = await UserModel.findById(recipientId).select('preferences').lean();
+  if (user?.preferences?.emails === false) return;
+  
+  const currencySymbol = user?.preferences?.currency || '₨';
 
   const isConfirmed = status === 'confirmed';
   const color = isConfirmed ? '#10b981' : '#f43f5e';
@@ -163,8 +165,9 @@ export const sendBookingStatusEmail = async (booking, status, reason = '') => {
   const hotelName = booking.hotel?.name || 'Hotel';
   const roomType = booking.room?.roomType || 'Room';
   const hotelAddress = booking.hotel?.address
-    ? `${booking.hotel.address.city || ''}, ${booking.hotel.address.province || ''}`.replace(/^, | , /g, '').trim()
+    ? `${booking.hotel.address.hotelAddress || ''}, ${booking.hotel.address.city || ''}, ${booking.hotel.address.province || ''}`.replace(/^, | , /g, '').trim()
     : 'Address Not Available';
+  const hotelPhone = booking.hotel?.contact?.phone || 'Contact Info Not Available';
 
   const checkIn = booking.checkInDate ? new Date(booking.checkInDate).toLocaleDateString() : 'N/A';
   const checkOut = booking.checkOutDate ? new Date(booking.checkOutDate).toLocaleDateString() : 'N/A';
@@ -200,9 +203,11 @@ export const sendBookingStatusEmail = async (booking, status, reason = '') => {
         <div style="margin: 20px 0; padding: 16px; background: white; border: 1px solid #e2e8f0; border-radius: 12px;">
           <h3 style="margin-top: 0; margin-bottom: 12px; color: #334155; font-size: 15px; border-bottom: 1px solid #e2e8f0; padding-bottom: 8px;">Details</h3>
           <p style="margin: 6px 0; color: #475569; font-size: 13px;"><strong>Hotel:</strong> ${hotelName}</p>
+          <p style="margin: 6px 0; color: #475569; font-size: 13px;"><strong>Address:</strong> ${hotelAddress}</p>
+          <p style="margin: 6px 0; color: #475569; font-size: 13px;"><strong>Phone:</strong> ${hotelPhone}</p>
           <p style="margin: 6px 0; color: #475569; font-size: 13px;"><strong>Check-in:</strong> ${checkIn}</p>
           <p style="margin: 6px 0; color: #475569; font-size: 13px;"><strong>Check-out:</strong> ${checkOut}</p>
-          <p style="margin: 6px 0; color: #475569; font-size: 13px;"><strong>Total:</strong> $${booking.totalPrice || 0}</p>
+          <p style="margin: 6px 0; color: #475569; font-size: 13px;"><strong>Total:</strong> ${currencySymbol}${booking.totalPrice || 0}</p>
         </div>
         
         ${reasonHtml}

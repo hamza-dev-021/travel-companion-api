@@ -72,8 +72,22 @@ export const sendNotificationToUser = async (userId, notificationData) => {
             ...notificationData
         });
 
-        const populatedNotification = await Notification.findById(notification._id)
-            .populate('sender', 'firstName lastName profilePicture');
+        let populatedNotification = await Notification.findById(notification._id)
+            .populate('sender', 'firstName lastName photoUrl preferences')
+            .lean();
+
+        if (populatedNotification?.sender) {
+            // Handle missing photoUrl hydration
+            if (!populatedNotification.sender.photoUrl) {
+                populatedNotification.sender.photoUrl = `/api/profile/${populatedNotification.sender._id}/photo`;
+            }
+
+            const isPhotoPublic = populatedNotification.sender.preferences?.publicProfilePhoto === true;
+            if (!isPhotoPublic) {
+                delete populatedNotification.sender.photoUrl;
+            }
+            delete populatedNotification.sender.preferences;
+        }
 
         const userClients = clients.get(userId.toString());
         if (userClients) {
@@ -106,11 +120,37 @@ export const getNotifications = async (req, res, next) => {
         const limit = parseInt(req.query.limit) || 10;
         const skip = (page - 1) * limit;
 
-        const notifications = await Notification.find({ recipient: req.user._id })
+        let notifications = await Notification.find({ recipient: req.user._id })
             .sort({ createdAt: -1 })
             .skip(skip)
             .limit(limit)
-            .populate('sender', 'firstName lastName profilePicture');
+            .populate('sender', 'firstName lastName photoUrl preferences')
+            .lean();
+
+        // Sanitize profile pictures based on sender privacy settings
+        notifications = notifications.map(notif => {
+            if (notif.sender) {
+                // IMPORTANT: Clone the sender object to avoid shared reference mutations 
+                // (Mongoose reuse objects for the same ID in populated lean results)
+                const sender = { ...notif.sender };
+
+                // Handle missing photoUrl hydration
+                if (!sender.photoUrl) {
+                    sender.photoUrl = `/api/profile/${sender._id}/photo`;
+                }
+
+                const isPhotoPublic = sender.preferences?.publicProfilePhoto === true;
+                
+                if (!isPhotoPublic) {
+                    delete sender.photoUrl;
+                }
+                // Strip preferences from final payload
+                delete sender.preferences;
+
+                notif.sender = sender;
+            }
+            return notif;
+        });
 
         const total = await Notification.countDocuments({ recipient: req.user._id });
 

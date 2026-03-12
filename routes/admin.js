@@ -46,6 +46,13 @@ router.patch('/hotels/:hotelId/verification', async (req, res) => {
       return res.status(404).json({ message: 'Hotel verification not found' });
     }
 
+    // Trigger Lazy Migration for HotelVerification
+    if (typeof hotel.ensureConsistency === 'function') {
+      if (hotel.ensureConsistency()) {
+        await hotel.save();
+      }
+    }
+
     const currentHotelStatus = hotel.status || 'not-submitted';
 
     if (
@@ -144,11 +151,35 @@ router.get('/users/:id', async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
+    // Trigger Lazy Migration for User
+    if (typeof user.ensureConsistency === 'function') {
+      if (user.ensureConsistency()) {
+        await user.save();
+      }
+    }
+
     const provider = await ServiceProvider.findOne({ userId: user._id });
     // Load all hotel verifications for this provider (most recent first)
-    const hotelVerifications = await HotelVerification.find({ userId: user._id }).sort({ createdAt: -1 }).lean();
+    const hotelVerifications = await HotelVerification.find({ userId: user._id }).sort({ createdAt: -1 });
+    
+    // Trigger Lazy Migration for each HotelVerification
+    for (const hv of hotelVerifications) {
+      if (typeof hv.ensureConsistency === 'function') {
+        if (hv.ensureConsistency()) {
+          await hv.save();
+        }
+      }
+    }
+
     let latestHotelVerification = hotelVerifications && hotelVerifications.length > 0 ? hotelVerifications[0] : null;
-    let travelVerification = await TravelVerification.findOne({ userId: user._id }).lean();
+    let travelVerification = await TravelVerification.findOne({ userId: user._id });
+
+    // Trigger Lazy Migration for TravelVerification
+    if (travelVerification && typeof travelVerification.ensureConsistency === 'function') {
+      if (travelVerification.ensureConsistency()) {
+        await travelVerification.save();
+      }
+    }
 
     // Attach signed URLs for private documents (hotel + travel) so admin can view them
     for (let i = 0; i < hotelVerifications.length; i += 1) {
@@ -357,6 +388,20 @@ router.patch('/providers/:id/verification', async (req, res) => {
     let hotel = await HotelVerification.findOne({ userId: user._id }).sort({ createdAt: -1 });
     let travel = await TravelVerification.findOne({ userId: user._id });
 
+    // Trigger Lazy Migration for Hotel
+    if (hotel && typeof hotel.ensureConsistency === 'function') {
+      if (hotel.ensureConsistency()) {
+        await hotel.save();
+      }
+    }
+
+    // Trigger Lazy Migration for Travel
+    if (travel && typeof travel.ensureConsistency === 'function') {
+      if (travel.ensureConsistency()) {
+        await travel.save();
+      }
+    }
+
     const currentHotelStatus = hotel ? hotel.status : 'not-submitted';
     const currentTravelStatus = travel ? travel.status : 'not-submitted';
 
@@ -529,7 +574,7 @@ router.get('/hotels/:hotelId', async (req, res) => {
 router.get('/bookings', async (req, res) => {
   try {
     const bookings = await Booking.find()
-      .populate('user', 'firstName lastName email profilePicture')
+      .populate('user', 'firstName lastName email photoUrl')
       .populate('hotel', 'name address userId')
       .populate('room', 'roomNumber roomType pricePerNight')
       .sort({ createdAt: -1 });

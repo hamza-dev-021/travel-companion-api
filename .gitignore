@@ -33,6 +33,7 @@ scripts/
 
 # Mock data
 services/mockHotelData.js
+migrate-photos.js
 
 # IDE
 .vscode/
